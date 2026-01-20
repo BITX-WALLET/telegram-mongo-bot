@@ -1,73 +1,101 @@
-const { MongoClient } = require("mongodb");
-const axios = require("axios");
+// تحميل المتغيرات محليًا فقط (Railway يتجاهل .env تلقائيًا)
 require("dotenv").config();
 
-const uri = process.env.MONGO_URI;
-const botToken = process.env.BOT_TOKEN;
-const chatId = process.env.CHAT_ID;
-const dbName = process.env.DB_NAME;
-const collectionName = process.env.COLLECTION_NAME;
+const { MongoClient } = require("mongodb");
+const axios = require("axios");
 
-if (!uri || !botToken || !chatId || !dbName || !collectionName) {
-  console.error("Missing .env values. Please fill all fields.");
+// ==================
+// 1️⃣ فحص المتغيرات
+// ==================
+const requiredVars = [
+  "MONGO_URI",
+  "BOT_TOKEN",
+  "CHAT_ID",
+  "DB_NAME",
+  "COLLECTION_NAME",
+];
+
+const missing = requiredVars.filter((v) => !process.env[v]);
+
+if (missing.length) {
+  console.error("❌ Missing environment variables:", missing.join(", "));
   process.exit(1);
 }
 
-const client = new MongoClient(uri);
+// ==================
+// 2️⃣ إعداد Telegram
+// ==================
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
 
-async function sendTelegram(text) {
-  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+async function sendTelegram(message) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
   try {
-    const res = await axios.post(url, {
-      chat_id: chatId,
-      text,
+    await axios.post(url, {
+      chat_id: CHAT_ID,
+      text: message,
       parse_mode: "HTML",
     });
-
-    if (!res.data.ok) {
-      console.error("Telegram error:", res.data);
-    }
   } catch (err) {
-    console.error("Telegram request failed:", err.response ? err.response.data : err.message);
+    console.error("❌ Telegram error:", err.message);
   }
 }
 
+// ==================
+// 3️⃣ إعداد MongoDB
+// ==================
+const client = new MongoClient(process.env.MONGO_URI);
+
 async function main() {
   await client.connect();
-  const db = client.db(dbName);
-  const coll = db.collection(collectionName);
 
-  console.log("Connected to MongoDB and watching collection:", collectionName);
+  const db = client.db(process.env.DB_NAME);
+  const collection = db.collection(process.env.COLLECTION_NAME);
 
-  const changeStream = coll.watch([{ $match: { operationType: "insert" } }]);
+  console.log(
+    `✅ Connected to MongoDB and watching collection: ${process.env.COLLECTION_NAME}`
+  );
 
-  changeStream.on("change", (change) => {
-    console.log("Change detected:", change);
+  // ==================
+  // 4️⃣ Change Stream
+  // ==================
+  const changeStream = collection.watch([
+    { $match: { operationType: "insert" } },
+  ]);
 
+  changeStream.on("change", async (change) => {
     const doc = change.fullDocument;
+    if (!doc) return;
 
-    const hash = doc.hash || "unknown";
-    const from = Array.isArray(doc.from) ? doc.from.join("\n") : doc.from || "unknown";
-    const to = Array.isArray(doc.to) ? doc.to.join("\n") : doc.to || "unknown";
-    const amount = doc.amount || "unknown";
-    const fee = doc.feeBTC || "unknown";
-    const date = doc.date ? new Date(doc.date.$date || doc.date).toLocaleString() : "unknown";
+    // فلترة: إشعار فقط عند إيداع فعلي
+    if (doc.type !== "deposit" && doc.amount <= 0) return;
 
-    const text = `
-📌 New Transaction Detected!
-🧾 Hash: ${hash}
-➡️ From:
-${from}
-➡️ To:
-${to}
-💰 Amount: ${amount}
-🧾 Fee: ${fee}
-📅 Date: ${date}
-    `;
+    const message = `
+💰 <b>New Deposit</b>
 
-    sendTelegram(text);
+<b>Amount:</b> ${doc.amount} BTC
+<b>Tx:</b> <code>${doc.hash}</code>
+<b>Date:</b> ${new Date(doc.date).toLocaleString()}
+`;
+
+    await sendTelegram(message);
+  });
+
+  // ==================
+  // 5️⃣ حماية من السقوط
+  // ==================
+  process.on("SIGINT", async () => {
+    console.log("🔴 Closing MongoDB connection...");
+    await client.close();
+    process.exit(0);
   });
 }
 
-main().catch(console.error);
+// ==================
+// 6️⃣ تشغيل
+// ==================
+main().catch((err) => {
+  console.error("❌ Fatal error:", err);
+  process.exit(1);
+});
