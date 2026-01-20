@@ -1,4 +1,3 @@
-// تحميل المتغيرات محليًا فقط (Railway يتجاهل .env تلقائيًا)
 require("dotenv").config();
 
 const { MongoClient } = require("mongodb");
@@ -8,11 +7,11 @@ const axios = require("axios");
 // 1️⃣ فحص المتغيرات
 // ==================
 const requiredVars = [
-  "MONGO_URI",mongodb+srv://BITX:sam13467@cluster0.rk5wvad.mongodb.net/
-  "BOT_TOKEN",8296826604:AAHa4EyEc4Wz6WxuEPDKB7DchOslyPsyVVk
-  "CHAT_ID", 919699677
-  "DB_NAME", BITX_MAIN
-  "COLLECTION_NAME", transactions
+  "MONGO_URI",
+  "BOT_TOKEN",
+  "CHAT_ID",
+  "DB_NAME",
+  "COLLECTION_NAME"
 ];
 
 const missing = requiredVars.filter((v) => !process.env[v]);
